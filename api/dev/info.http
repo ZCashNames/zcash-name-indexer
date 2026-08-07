@@ -1,0 +1,7 @@
+#GET https://indexer.zcashnames.loc/v1.0/info
+POST https://indexer.zcashnames.loc/v1.0/info
+Content-Type: application/json
+
+{
+  "extended": true
+}

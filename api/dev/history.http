@@ -1,0 +1,8 @@
+POST https://indexer.zcashnames.loc/v1.0/history/bob.zcash
+Content-Type: application/json
+
+{
+  "count": 10,
+  "from_block_id": 3428915,
+  "order": "asc"
+}

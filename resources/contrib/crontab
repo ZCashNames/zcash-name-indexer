@@ -1,0 +1,5 @@
+# Example crontab for ZCash Name Indexer
+# Adjust paths and user permissions according to your deployment.
+
+# Run every 1 minute
+* * * * * /usr/bin/php /var/www/zcash-name-indexer/indexer.php sync >/dev/null 2>&1

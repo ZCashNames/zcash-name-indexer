@@ -1,0 +1,65 @@
+<?php declare(strict_types=1);
+
+// Do not forget to GRANT XA_RECOVER_ADMIN ON *.* TO '{:db_user:}'@'{:db_host:}';
+const DB_CONFIG = [
+    'host' => '127.0.0.1:3306',
+    'user' => '{:db_user:}',
+    'pass' => '{:db_password:}',
+    'db_name' => '{:db_name:}',
+];
+
+const GRPC_NODE = '{:grpc_node:}';
+
+// Do not forget to add proper RPC URL(s) to db table rpc_list: chain_id=>rpc_url
+// Give each row a distinct issue_ts (0, 1, 2, …): the indexer picks the lowest and
+// has no tiebreaker, so equal values make the choice arbitrary and endpoint problems
+// unreproducible. A failing endpoint is stamped with time(), which sorts far behind
+// these seeds.
+const EVM_NETWORK = [
+    'chain_id' => 56,
+    'contract_address' => '0x6c01003716b0a74933325be1baf34fe34cf3e0d3',
+    'abi' => __DIR__ . '/../resources/evm-anchor.abi',
+];
+
+const INDEXER_ROCKSDB_PROXY_SOCKET_PATH = 'unix:///run/rr-proxy/zcash-indexer.sock';
+
+// Main on-chain init data
+// The empty registry. In the compact SMT an empty subtree is 32 zero bytes at every
+// height, so the root of an empty tree is all zeros - this is what a freshly started
+// rr-proxy reports, and what any third party replaying from COIN_GENESIS_BLOCK computes.
+// It MUST match the genesis root the anchor contract was deployed with.
+const SMT_GENESIS_ROOT = '0000000000000000000000000000000000000000000000000000000000000000';
+// payment processing wallet's birthday: the block before which no service transaction can
+// exist, which is what makes the empty tree above the correct starting state.
+const COIN_GENESIS_BLOCK = 3438108;
+
+const COIN_SYNC_BLOCK_STEP = 5000;
+// Microseconds to sleep after each eth_call. 0 disables it.
+//
+// The limit on public endpoints is per-second CONCURRENCY, not total volume:
+// 600 sequential calls succeed where 100 fired at once do not. Discovery is
+// already sequential, so 0 is right for most endpoints; raise it only if one
+// starts answering "limit exceeded". 200000 = 0.2s.
+const EVM_THROTTLING = {:evm_throttling:};
+
+// Checkpoints fetched and persisted per database transaction. Bounds how much
+// work is lost if an endpoint dies mid-run: at most one chunk, since the ascending
+// walk resumes from the highest stored index.
+const EVM_BATCH_SIZE = {:evm_batch_size:};
+
+// Zcash network this deployment speaks. MUST match the circuit the prover was built with:
+//   'mainnet' -> plain `cargo prove build`               (marker zNS:1:)
+//   'testnet' -> `cargo prove build --features testnet`  (marker tzNS:1:)
+// Also passed to rust_tx_scanner as --network, so the viewing key and the scanner agree.
+// Derived from the INCOME_WALLET_VIEW_KEY prefix below (uview1…) when this file was generated.
+const COIN_NETWORK = 'mainnet';
+
+const INCOME_WALLET = 'u1nlded5cat3n9r4m0tpxr5a7sy3emccvaun7n4x9w848qa7ncl4eg5v2zyat4kevaa4fwfq0unwj3vnczfax3s9rutma43dckgqss8qrg';
+const INCOME_WALLET_VIEW_KEY = 'uview1uxy3j27qhwkh8peq8k6g0vldalgqm4lyfxwuc2r95jelk458gmx6elc4e92t9g75x655vd7nxrtv3gllvajt3n8v0x36224ma3hrtvvtps7ejxysx8puelggt86vfuslxvdvjq7a778chqtcg626lcsr0ht26v3wgyfu5u04sn2qsle9k7faakg479tqf';
+
+// notification settings
+const NOTIFY_TYPE = '{:notify_type:}';
+const NOTIFY_TG_BOT_KEY = '{:notify_tg_bot_key:}';
+const NOTIFY_TG_USER_ID = '{:notify_tg_user_id:}';
+
+const WORKLOGS_PATH = '{:logs_path:}';

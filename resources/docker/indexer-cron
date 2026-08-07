@@ -1,0 +1,9 @@
+# Indexer schedule. Cron rather than systemd timers, because this image has no init system.
+#
+# `flock -n` is what makes a one-minute interval safe: a sync that overruns simply skips
+# the next tick instead of stacking a second copy on the same database and SMT.
+SHELL=/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+
+* * * * * root flock -n /run/indexer-sync.lock /usr/local/bin/indexer sync >> /var/log/indexer/sync-cron.log 2>&1
+17 3 * * * root /usr/sbin/logrotate /etc/logrotate.conf >> /var/log/indexer/logrotate-cron.log 2>&1

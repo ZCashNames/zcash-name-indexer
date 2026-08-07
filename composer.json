@@ -1,0 +1,26 @@
+{
+    "autoload": {
+        "psr-4": {
+            "Indexer\\": "./include",
+            "Application\\": "./registrar/include"
+        }
+    },
+    "require": {
+        "ext-mysqli": "*",
+        "ext-sodium": "*",
+        "ext-bcmath": "*",
+        "ext-ctype": "*",
+        "guzzlehttp/guzzle": "^7.10",
+        "php-http/guzzle7-adapter": "^1.1",
+        "web3p/web3.php": "^0.3.2",
+        "irazasyed/telegram-bot-sdk": "^3.16",
+        "web3p/ethereum-tx": "^0.4.3"
+    },
+    "_comments": {
+        "web3p/ethereum-tx": "needed for the registrar"
+    },
+
+    "provide": {
+        "ext-libsodium": "*"
+    }
+}

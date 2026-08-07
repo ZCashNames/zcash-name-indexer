@@ -1,0 +1,9 @@
+#POST https://indexer.zcashnames.loc/v1.0/resolve/reverse/u146xylzx0uygtu0f2ae0p67w0229vm8h756aurrhsjpsfpyxy20ustc62xhtc9a4xrr734u5nndw0kzzav7vt57qh95yvwqktpqcfvkwx
+#POST https://indexer.zcashnames.loc/v1.0/resolve/owner/3757ee1a8b3f10353ca6edd47b66920392b02e323dca3f3edddb5de142079a53
+POST https://indexer.zcashnames.loc/v1.0/resolve/bob.zcash
+Content-Type: application/json
+
+{
+  "extended": true,
+  "with_checkpoint": true
+}

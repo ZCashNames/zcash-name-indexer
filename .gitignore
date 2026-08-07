@@ -1,0 +1,11 @@
+/.claude/
+/.idea/
+/vendor/
+/registrar/
+/config/*.php
+release_type
+*.bak
+/resources/rust_tx_scanner
+/resources/tests/
+/resources/tools/
+BACKLOG.md
