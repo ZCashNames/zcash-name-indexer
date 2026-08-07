@@ -348,12 +348,12 @@ sudo systemctl enable --now zcash-name-indexer.timer zcash-name-indexer-watchdog
 
 ## 🧩 Related Components
 
-| Component | Role |
-|:---|:---|
-| [`rr-proxy`](https://github.com/ZCashNames/zcash-name-rr-proxy) | RocksDB socket daemon that owns the compact SMT and issues Merkle proofs. |
-| `zcash-name-prover` | SP1 zkVM circuit and host runner producing Groth16 proofs of batch state transitions. |
-| `zcash-name-evm-anchor` | The EVM contract storing anchored roots and verifying proofs. |
-| `rust_tx_scanner` | Shielded-note scanner; decrypts commands and payments with the published viewing key. |
+| Component                                                                     | Role |
+|:------------------------------------------------------------------------------|:---|
+| [`rr-proxy`](https://github.com/ZCashNames/zcash-name-rr-proxy)               | RocksDB socket daemon that owns the compact SMT and issues Merkle proofs. |
+| [`zcash-name-prover`](https://github.com/ZCashNames/zcash-name-prover)        | SP1 zkVM circuit and host runner producing Groth16 proofs of batch state transitions. |
+| [`zcash-name-evm-anchor`](https://github.com/ZCashNames/zcash-name-evm-anchor)| The EVM contract storing anchored roots and verifying proofs. |
+| [`rust_tx_scanner`](https://github.com/ZCashNames/rust_tx_scanner)            | Shielded-note scanner; decrypts commands and payments with the published viewing key. |
 
 ---
 
