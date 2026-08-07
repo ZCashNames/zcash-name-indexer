@@ -143,6 +143,21 @@ try {
     // below from processing the checkpoints already stored. Discovery fills the work
     // queue; the sync consumes it. A short queue means less work this run, never none.
     try {
+        // Pin every read below to one finalised height before the walk starts.
+        //
+        // Reading the chain tip would let a checkpoint that a reorg then discards be
+        // written to a table the reconcile path treats as authoritative: the next run sees
+        // the stored root disagree with the chain, deletes rows and force-stops demanding a
+        // rebuild. On BSC a one-block reorg is ordinary, so that turns routine chain
+        // behaviour into an outage. Pinning also keeps the length probe and the fetches
+        // that follow it on the same view, which reading the tip per call would not.
+        $pinned = $evm->pinReadBlock();
+        logEvent(
+            'Reading checkpoints at EVM block ' . $pinned['block'] . ' (' . $pinned['mode'] . ')',
+            'EVM Checkpoints',
+            'indexer.debug'
+        );
+
         $chainLength = $evm->getRootChainLength();
         $localNext = $checkpoint['idx'] + 1;
 

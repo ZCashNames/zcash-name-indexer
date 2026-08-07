@@ -65,6 +65,15 @@ if (!defined('WORKLOGS_PATH')) {
 // probabilistic substitute for a real finality signal, so it is deliberately generous.
 const EVM_FINALITY_FALLBACK_CONFIRMATIONS = 30;
 
+// How long /v1.0/info may reuse the anchored root it last read from the contract.
+//
+// This is a ceiling, not just a refresh interval: past it the endpoint reports the root as
+// unknown rather than serving the last value it happens to hold. Serving an arbitrarily old
+// root as what the contract "currently attests to" is the stale-but-confident failure this
+// whole measurement exists to avoid - a node reporting itself synced while sitting well
+// behind, because both sides of the comparison were frozen at the same value.
+const ANCHOR_CACHE_TTL_SEC = 30;
+
 // Internal Exceptions error codes
 const INT_EXC_API_ERROR = -97;
 const INT_EXC_DB = -98;

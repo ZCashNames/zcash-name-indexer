@@ -31,6 +31,25 @@ class Evm
     protected Eth $eth;
     protected Ethabi $ethAbi;
     protected array $events;
+    /**
+     * Block that every contract read is answered from, as a hex quantity, or null to let
+     * the node answer from `latest`.
+     *
+     * Pinned to one concrete height rather than passing the `finalized` tag on each call,
+     * for two reasons. Reading `latest` lets a checkpoint that a reorg later discards be
+     * persisted, and the reconcile path then treats that as a rollback: it deletes rows
+     * and force-stops the node demanding a rebuild, turning an ordinary one-block BSC
+     * reorg into an operator-intervention outage. And a run that resolved the tag per call
+     * would let the length probe and the fetches that follow it straddle different chain
+     * tips, so the walk could observe a length it can no longer read to.
+     */
+    protected ?string $readBlock = null;
+    /**
+     * What pinReadBlock() settled on, so it can report the same answer twice.
+     *
+     * @var array{block: int, mode: string}|null
+     */
+    protected ?array $pinnedAt = null;
 
 
     /**
@@ -254,8 +273,13 @@ class Evm
             $out = $result;
         };
 
+        // Contract::call() pops the callback first and slices off the function's declared
+        // inputs; a single remaining non-array argument is then taken as the block to read
+        // at. So appending it here needs no change in the library.
+        $tail = $this->readBlock === null ? [$handler] : [$this->readBlock, $handler];
+
         try {
-            $this->contract->at($this->contractAddress)->call($function, ...[...$args, $handler]);
+            $this->contract->at($this->contractAddress)->call($function, ...[...$args, ...$tail]);
         } catch (Throwable $e) {
             $this->handleRpcError($e);
         }
@@ -267,6 +291,46 @@ class Evm
         }
 
         return $out ?? [];
+    }
+
+    /**
+     * Pins every subsequent contract read in this run to the newest finalised block, and
+     * reports which rule produced it: 'finalized' when the endpoint serves the tag, 'depth'
+     * when it does not and a confirmation depth stood in.
+     *
+     * Those two are not equivalent — depth is probabilistic where the tag is a consensus
+     * guarantee — so the caller is expected to log the mode rather than let "final" quietly
+     * mean two different things. This mirrors what the registrar already does before it
+     * treats an anchor transaction as settled.
+     *
+     * Idempotent: the first call fixes the height for the lifetime of the instance.
+     *
+     * @return array{block: int, mode: string}
+     * @throws Throwable
+     */
+    public function pinReadBlock(): array
+    {
+        // Return what is actually pinned. Re-resolving would report a height the reads are
+        // not using, which is worse than not reporting at all.
+        if ($this->pinnedAt !== null) {
+            return $this->pinnedAt;
+        }
+
+        $mode = 'finalized';
+        $block = $this->getFinalizedBlockNumber();
+
+        if ($block === null) {
+            $mode = 'depth';
+            $block = $this->getBlockCount() - EVM_FINALITY_FALLBACK_CONFIRMATIONS;
+        }
+
+        // A chain younger than the fallback depth would otherwise ask for a negative
+        // height; genesis is the honest floor and simply yields an empty rootChain.
+        $block = max($block, 0);
+
+        $this->readBlock = '0x' . dechex($block);
+
+        return $this->pinnedAt = ['block' => $block, 'mode' => $mode];
     }
 
     /**

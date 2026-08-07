@@ -174,7 +174,11 @@ RUN set -eux; \
     printf '#!/bin/sh\ncd /opt/zcash-name-indexer || exit 1\nexec php indexer.php "$@"\n' > /usr/local/bin/indexer; \
     chmod 0755 /usr/local/bin/indexer; \
     mkdir -p /var/log/indexer /opt/rr-proxy/db /run/php /run/mysqld; \
-    chown -R www-data:www-data /var/log/indexer /opt/rr-proxy; \
+    # resources/ too: the API writes its anchored-root cache and lock there as
+    # www-data. indexer.php already writes resources/sync.lock, but cron runs it as
+    # root, so this directory had never needed to be writable by the web user.
+    chown -R www-data:www-data /var/log/indexer /opt/rr-proxy \
+        /opt/zcash-name-indexer/resources; \
     chown -R mysql:mysql /run/mysqld
 
 COPY resources/docker/configure.php  /usr/local/lib/configure.php
