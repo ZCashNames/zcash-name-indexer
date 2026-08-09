@@ -177,7 +177,7 @@ try {
             );
 
             $keep = -1;
-            for ($i = min((int)$checkpoint['idx'], max($chainLength - 1, 0)); $i >= 0; $i--) {
+            for ($i = min($checkpoint['idx'], max($chainLength - 1, 0)); $i >= 0; $i--) {
                 $onChain = $evm->getCheckpointAt($i);
                 if ($onChain === null) {
                     continue;
@@ -312,7 +312,7 @@ try {
                                 ($commandData = Protocol::parseCommand(
                                     $scanInputData['memo'],
                                     $scanInputData['amount'],
-                                    (int)$scanBlockData['time']
+                                    $scanBlockData['time']
                                 )) !== []) {
                                 // ignore TX with wrong coin amount
                                 if (Protocol::paymentAmountValid($commandData, $scanInputData['amount']) === false) {
