@@ -161,7 +161,7 @@ Runtime configuration lives in `config/<RELEASE_TYPE>.inc.php`; start from [`con
 
 > ⚠️ The viewing key and the scanner must target the same network. A testnet key with the scanner defaulting to mainnet fails with *“Viewing key is for network Test but scanner is running with --network Main”*.
 
-Database schema: [`resources/schema.sql`](resources/schema.sql) (tables `checkpoints`, `domains`, `domains_history`, `marketplace`, `params`, `rpc_list`). Incremental changes live in [`resources/migrations/`](resources/migrations/).
+Database schema: [`resources/schema.sql`](resources/schema.sql) (tables `checkpoints`, `domains`, `domains_history`, `marketplace`, `params`, `rpc_list`).
 
 At least one row in `rpc_list` for the configured chain is required; the indexer refuses to start without one.
 
@@ -200,7 +200,7 @@ restart rather than a silent outage.
 | Base | Debian 13 (trixie) slim |
 | MySQL | 8.4 LTS |
 | PHP | 8.5 (FPM + CLI) |
-| nginx | 1.26 stable |
+| nginx | 1.30 stable (pinned; Debian trixie ships 1.26) |
 | Scheduler | cron (no init system in the image) |
 | Logs | logrotate, covering indexer, rr-proxy, nginx and MySQL |
 
@@ -247,7 +247,7 @@ To build the Docker image yourself from the source code:
    ```
 2. Build the Docker image locally:
    ```bash
-   docker build -t ghcr.io/ZCashNames/zcash-name-indexer:latest -f resources/docker/Dockerfile .
+   docker build -t ghcr.io/zcashnames/zcash-name-indexer:latest -f resources/docker/Dockerfile .
    ```
 3. Navigate to the `resources/docker` directory:
    ```bash
