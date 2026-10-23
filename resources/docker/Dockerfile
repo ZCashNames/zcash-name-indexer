@@ -66,7 +66,7 @@ LABEL org.opencontainers.image.title="ZCash Name Indexer" \
 # Pinned: the daemon and the on-chain vKey must come from the same protocol generation.
 # Floating this to "latest" would let a rebuild change the tree implementation underneath
 # an already-synced database.
-ARG RR_PROXY_VERSION=v0.1.0
+ARG RR_PROXY_VERSION=v0.2.1
 ARG RR_PROXY_REPO=https://github.com/ZCashNames/zcash-name-rr-proxy
 
 # The scanner decrypts the shielded notes that carry every command. It is a build artifact

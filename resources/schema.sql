@@ -3,7 +3,7 @@
 --
 
 DROP TABLE IF EXISTS `checkpoints`;
--- `idx` is the position in the anchor contract's `rootChain` array: the resume cursor for
+-- `idx` is the position of the root in the anchor contract (its `rootAt` index): the resume cursor for
 -- checkpoint discovery, and what makes a rollback detectable (an index can later hold a
 -- different root).
 --
@@ -26,6 +26,8 @@ CREATE TABLE `domains` (
   `domain_name` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `created_block_id` int unsigned NOT NULL,
   `updated_block_id` int unsigned NOT NULL,
+  `created_ts` int unsigned NOT NULL,
+  `updated_ts` int unsigned NOT NULL,
   `nonce` int unsigned NOT NULL,
   PRIMARY KEY (`domain_name`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -38,6 +40,7 @@ DROP TABLE IF EXISTS `domains_history`;
 CREATE TABLE `domains_history` (
   `domain_name` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `domain_block_id` int unsigned NOT NULL,
+  `domain_ts` int unsigned NOT NULL,
   `target_address` varchar(232) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `owner_pubkey` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `domain_tx` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

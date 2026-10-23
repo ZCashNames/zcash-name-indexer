@@ -3,6 +3,7 @@
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use Indexer\Database;
+use Indexer\RustRocksDBProxy;
 use Indexer\SparseMerkleTree;
 
 function logEvent(string $text, string $tag = '', string $file = 'debug'): void
@@ -85,6 +86,78 @@ function setParams(array $params, Database $db): void
         ['value']
     ) === false) {
         throw new RuntimeException('DB Error: can\'t set parameters to DB.');
+    }
+}
+
+/**
+ * Whether the sync is held by a stop (see PARAM_SYNC_STOPPED).
+ *
+ * The stop no longer holds once EVM_NETWORK['expected_epoch'] reaches the on-chain epoch it was
+ * made at: the next run checks the new value against the chain, and stops again if it is still
+ * not the on-chain epoch. Until then the epoch, which never goes down, is still past the reviewed
+ * one, so holding needs no chain read. With $lift, such a stop is also removed.
+ *
+ * @param Database $db
+ * @param bool $lift
+ * @return bool
+ * @throws RuntimeException
+ */
+function syncStopped(Database $db, bool $lift = false): bool
+{
+    $stop = getParams([PARAM_SYNC_STOPPED], $db)[PARAM_SYNC_STOPPED] ?? null;
+    if ($stop === null) {
+        return false;
+    }
+    if ($stop > EVM_NETWORK['expected_epoch']) {
+        return true;
+    }
+    if ($lift && $db->doDelete('params', ['param' => PARAM_SYNC_STOPPED]) === false) {
+        throw new RuntimeException('Failed to lift the epoch stop', INT_EXC_DB);
+    }
+
+    return false;
+}
+
+/**
+ * Resets the node for a resync from genesis: empties its tables and its SMT, and seeds the
+ * genesis checkpoint. What `indexer.php clean confirm` does, and what the node does by itself
+ * after a rollback its operator has reviewed (see the reconcile in indexer.php). Nothing is
+ * lost: all of it is derived from the chains again.
+ *
+ * @param Database $db
+ * @param RustRocksDBProxy $rocksDb
+ * @return void
+ * @throws RuntimeException
+ */
+function resetIndexerState(Database $db, RustRocksDBProxy $rocksDb): void
+{
+    foreach (INDEXER_DB_TABLES as $oneTable) {
+        if ($db->query('TRUNCATE TABLE `' . $oneTable . '`') === false) {
+            throw new RuntimeException('Can\'t clean the table "' . $oneTable . '"', INT_EXC_DB);
+        }
+    }
+    if ($db->doInsert(
+        'checkpoints',
+        [
+            // idx 0 is the contract's genesis root (rootAt[0]) — the empty-registry root
+            // it was deployed with. Discovery resumes from the highest idx, so this row is
+            // the anchor the whole ascending walk hangs from.
+            'idx' => 0,
+            'block_id' => COIN_GENESIS_BLOCK,
+            'smt_root' => SMT_GENESIS_ROOT,
+        ]
+    ) === false) {
+        throw new RuntimeException('Can\'t insert Genesis Root to checkpoints', INT_EXC_DB);
+    }
+
+    setParams([
+        PARAM_LAST_PROCESSED_COIN_BLOCK => COIN_GENESIS_BLOCK,
+        // Rebuilt from genesis under the epoch configured now: see PARAM_STATE_EPOCH.
+        PARAM_STATE_EPOCH => EVM_NETWORK['expected_epoch'],
+    ], $db);
+
+    if ($rocksDb->clear() === false) {
+        throw new RuntimeException('Can\'t clean RocksDB database', INT_EXC_DB);
     }
 }
 

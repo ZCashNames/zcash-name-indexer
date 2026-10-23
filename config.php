@@ -88,6 +88,27 @@ const INDEXER_DB_TABLES = ['checkpoints', 'domains', 'domains_history', 'params'
 
 // params
 const PARAM_LAST_PROCESSED_COIN_BLOCK = 'last_processed_coin_block';
+// Present while the sync is stopped (see syncStopped()): an on-chain epoch this node has not been
+// updated for raises INT_EXC_FATAL marked :EPOCH-STOP:, and is then held here instead of failing
+// - and alerting - on every run. Stored as the on-chain epoch that raised it, and lifted as soon
+// as the config's expected_epoch reaches it, i.e. once the operator has reviewed that epoch.
+// Earlier code stored the expected_epoch instead, so a node updated before its epoch came into
+// force stopped for good; read the same way, that stop is not above expected_epoch, so it is
+// lifted and the next run checks the chain again.
+// In the database rather than a file, so it outlives a recreated container.
+const PARAM_SYNC_STOPPED = 'sync_stopped';
+// The anchor epoch under which the chain last confirmed this node's state. A rollback always
+// moves the epoch, so a checkpoint the chain no longer attests to while this still equals
+// expected_epoch cannot be one - the chain reads are wrong. Once the operator has deployed a new
+// expected_epoch, it is the rollback they reviewed, and the node rebuilds itself (see the
+// reconcile in indexer.php).
+const PARAM_STATE_EPOCH = 'state_epoch';
+// Present while the node waits for the epoch it was updated for: deployed before that change
+// came into force, it finds the on-chain epoch below expected_epoch, and waits instead of
+// stopping (see the epoch gate in indexer.php). Stored as the expected_epoch it waits for, so the
+// operator is told once rather than on every run, and removed by the first run that finds the
+// chain at that epoch.
+const PARAM_EPOCH_WAIT = 'epoch_wait';
 
 // API Errors
 const API_ERROR_INTERNAL = 'Internal Error';

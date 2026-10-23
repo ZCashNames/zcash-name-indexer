@@ -17,7 +17,7 @@ class Protocol
     /// Covers client clock skew without letting a nonce be pushed far into the future.
     public const int NONCE_FUTURE_TOLERANCE = 300;
 
-    // available domain zones. Must equal pins-core's ALLOWED_ZONES.
+    // available domain zones. Must equal zns-core's ALLOWED_ZONES.
     protected const array DOMAIN_ZONES = ['zcash', 'zec', 'private', 'secure', 'safe'];
 
     // OPs
@@ -233,6 +233,50 @@ class Protocol
         }
 
         return $out;
+    }
+
+    /**
+     * The note carrying a transaction's command, or null when it carries none.
+     *
+     * One command per transaction: the FIRST note this viewing key decrypts whose memo passes
+     * parseCommand's pre-check - its format and, for every OP but CHG, its signature, nothing
+     * that depends on domain state. The notes after it are never looked at, even when this
+     * one is then refused by the full check or underpaid; the transaction simply carries no
+     * valid command.
+     *
+     * The registrar and the indexer must pick the same note, or their trees diverge. Both see
+     * a transaction's notes in the same order, by Ironwood action index (rust_tx_scanner keys
+     * its `inputs` by it), but they judge them at different moments: the registrar at ingest,
+     * before the domain state the command will meet is known, the indexer against that state.
+     * A rule that skipped a note the full check refuses would therefore pick a different note
+     * on each side - the indexer would apply a second command the registrar never queued, and
+     * the two roots would part for good. The state-free pre-check is what both can agree on.
+     *
+     * @param array $notes rust_tx_scanner's `inputs` of one transaction: action index =>
+     *                     ['amount' => zatoshi, 'memo' => text or null], in action order
+     * @param int $blockTime the time of the block carrying the transaction
+     * @return array{output: int, memo: string, amount: int, command: array}|null
+     * @throws RuntimeException
+     */
+    public static function commandOutput(array $notes, int $blockTime): ?array
+    {
+        foreach ($notes as $actionIndex => $oneNote) {
+            // The amount is the note's value in zatoshi, an integer straight from the
+            // decrypted note: no float ever stands in for it.
+            if (!isset($oneNote['memo']) || !is_int($amount = $oneNote['amount'] ?? null) || $amount <= 0) {
+                continue;
+            }
+            if (($command = self::parseCommand($oneNote['memo'], $amount, $blockTime, true)) !== []) {
+                return [
+                    'output' => $actionIndex,
+                    'memo' => $oneNote['memo'],
+                    'amount' => $amount,
+                    'command' => $command,
+                ];
+            }
+        }
+
+        return null;
     }
 
     /**

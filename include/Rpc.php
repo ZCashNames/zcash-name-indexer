@@ -43,16 +43,29 @@ class Rpc
     }
 
     /**
+     * A lightwalletd node from the public node list, for when no GRPC_NODE is configured: one of
+     * the five with the best uptime over 7 days, then latency, picked at random.
+     *
+     * @param string $network the Zcash network the node must serve, in COIN_NETWORK's vocabulary.
+     *                        A node of the other network answers too, with blocks the scanner
+     *                        parses under the wrong consensus rules - see txScannerPath().
      * @return string
      * @throws GuzzleException|RuntimeException|JsonException
      */
-    protected function getPublicGRPCNode(): string
+    protected function getPublicGRPCNode(string $network = COIN_NETWORK): string
     {
         $this->gRpcList = doHttpRequest(
             'https://nodus.alexxiy.top/api/v1.0/nodes',
             [
-                'chain' => 'main',
-                'count' => 5,
+                // The list names networks as zcashd's chain names do.
+                'chain' => match ($network) {
+                    'mainnet' => 'main',
+                    'testnet' => 'test',
+                    default => throw new RuntimeException('RPC: no gRPC node list for network "' . $network . '"'),
+                },
+                // More than the five kept below: the list holds P2P nodes as well, which the
+                // scanner cannot talk to.
+                'count' => 20,
                 'order_uptime' => '7d',
                 'order_latency' => true,
             ],
@@ -61,7 +74,17 @@ class Rpc
         if ($this->gRpcList === null) {
             throw new RuntimeException('RPC: Can\'t get gRPC node list from list provider');
         }
-        $this->gRpcList = $this->gRpcList['nodes'];
+        $this->gRpcList = array_slice(
+            array_values(array_filter(
+                $this->gRpcList['nodes'] ?? [],
+                static fn(mixed $node): bool => ($node['protocol'] ?? null) === 'grpc'
+            )),
+            0,
+            5
+        );
+        if ($this->gRpcList === []) {
+            throw new RuntimeException('RPC: the list provider has no ' . $network . ' gRPC node');
+        }
         $gRPCRandomNode = $this->gRpcList[array_rand($this->gRpcList)];
         return $gRPCRandomNode['host'] . ':' . $gRPCRandomNode['port'];
     }

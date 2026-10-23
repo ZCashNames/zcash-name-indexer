@@ -43,32 +43,7 @@ try {
                 'Make sure you understand what you\'re doing! Please add "confirm" word after the "clean" command to process.' . PHP_EOL;
             exit;
         }
-        foreach (INDEXER_DB_TABLES as $oneTable) {
-            if ($db->query('TRUNCATE TABLE `' . $oneTable . '`') === false) {
-                throw new RuntimeException('Can\'t clean the table "' . $oneTable . '"', INT_EXC_DB);
-            }
-        }
-        if ($db->doInsert(
-            'checkpoints',
-            [
-                // idx 0 is the contract's rootChain[0] — the genesis root it was deployed
-                // with. Discovery resumes from the highest idx, so this row is the anchor
-                // the whole ascending walk hangs from.
-                'idx' => 0,
-                'block_id' => COIN_GENESIS_BLOCK,
-                'smt_root' => SMT_GENESIS_ROOT,
-            ]
-        ) === false) {
-            throw new RuntimeException('Can\'t insert Genesis Root to checkpoints', INT_EXC_DB);
-        }
-
-        setParams([
-            PARAM_LAST_PROCESSED_COIN_BLOCK => COIN_GENESIS_BLOCK,
-        ], $db);
-
-        if ($rocksDb->clear() === false) {
-            throw new RuntimeException('Can\'t clean RocksDB database', INT_EXC_DB);
-        }
+        resetIndexerState($db, $rocksDb);
 
         echo 'The database has been successfully cleaned.' . PHP_EOL;
         exit;
@@ -79,6 +54,12 @@ try {
             'sync - start the indexer sync iteration (the way it\'s started from Systemd timer service)' . PHP_EOL .
             'watchdog - report a stalled sync lock (the way it\'s started from Systemd watchdog timer)' . PHP_EOL .
             'clean - perform the database clean for fresh initialization from on-chain data' . PHP_EOL;
+        exit;
+    }
+
+    // Held by an earlier :EPOCH-STOP: until the operator deploys the reviewed epoch (see
+    // PARAM_SYNC_STOPPED). Checked before the lock, so a stopped node holds none.
+    if (syncStopped($db, true)) {
         exit;
     }
 
@@ -104,7 +85,7 @@ try {
     $evm = new Evm(EVM_NETWORK, $db);
 
     // The newest checkpoint we hold locally. `idx` is the position in the contract's
-    // rootChain array, which is what makes discovery resumable.
+    // root chain (`rootAt` by index, 0 = genesis), which is what makes discovery resumable.
     if (($qr = $db->doSelect(
         'checkpoints',
         ['idx', 'block_id', 'smt_root'],
@@ -133,11 +114,18 @@ try {
             INT_EXC_FATAL
         );
     }
+    $epochParams = getParams([PARAM_STATE_EPOCH, PARAM_EPOCH_WAIT], $db);
+    // The epoch the chain last confirmed this state under; null on a node that predates it,
+    // until its next run confirms one (see PARAM_STATE_EPOCH).
+    $stateEpoch = $epochParams[PARAM_STATE_EPOCH] ?? null;
+    // The expected_epoch this node has already reported waiting for (see PARAM_EPOCH_WAIT).
+    $epochWait = $epochParams[PARAM_EPOCH_WAIT] ?? null;
 
     // --- CHECKPOINT DISCOVERY ------------------------------------------------------
     //
-    // Checkpoints are read ascending from the anchor contract's rootChain array. The idx
-    // column is the resume cursor, so an interrupted walk continues where it stopped.
+    // Checkpoints are read ascending from the anchor contract's root chain (`rootAt` by
+    // index). The idx column is the resume cursor, so an interrupted walk continues where it
+    // stopped.
     //
     // Best-effort by design: an RPC failure here must not prevent the blockchain sync
     // below from processing the checkpoints already stored. Discovery fills the work
@@ -147,10 +135,10 @@ try {
         //
         // Reading the chain tip would let a checkpoint that a reorg then discards be
         // written to a table the reconcile path treats as authoritative: the next run sees
-        // the stored root disagree with the chain, deletes rows and force-stops demanding a
-        // rebuild. On BSC a one-block reorg is ordinary, so that turns routine chain
-        // behaviour into an outage. Pinning also keeps the length probe and the fetches
-        // that follow it on the same view, which reading the tip per call would not.
+        // the stored root disagree with the chain and takes it for a rollback. On BSC a
+        // one-block reorg is ordinary, so that turns routine chain behaviour into an outage.
+        // Pinning also keeps the length probe and the fetches that follow it on the same
+        // view, which reading the tip per call would not.
         $pinned = $evm->pinReadBlock();
         logEvent(
             'Reading checkpoints at EVM block ' . $pinned['block'] . ' (' . $pinned['mode'] . ')',
@@ -158,7 +146,57 @@ try {
             'indexer.debug'
         );
 
-        $chainLength = $evm->getRootChainLength();
+        // Epoch gate — the new contract's client-safety marker.
+        //
+        // `epoch` advances whenever the anchored state moves by anything other than a proven
+        // batch under unchanged rules: a rules change, or a rollback. Either re-points names
+        // without a fresh owner signature, so the indexer must pin the epoch it has reviewed
+        // and refuse to follow the chain under a newer one until an operator has looked at
+        // what changed. EVM_NETWORK['expected_epoch'] is that pin; bump it only after
+        // reviewing the change on-chain. Reading it from anchoredState() ties the epoch to the
+        // root it guards (same block). A legitimate rollback trips this first, by design: the
+        // operator reviews, bumps expected_epoch, and on the next run the reconcile below
+        // finds the rolled-back checkpoints and rebuilds the node from genesis.
+        //
+        // The stop this raises holds until expected_epoch reaches the on-chain epoch (see
+        // PARAM_SYNC_STOPPED), so the operator is told once rather than on every run, and
+        // nothing more is needed than deploying the reviewed value.
+        //
+        // Below the reviewed epoch, the change this node was updated for is not in force yet.
+        // The epoch never goes down, so that is a change still to come, not one nobody has
+        // reviewed: the node waits for it instead of stopping, since a stop is for an on-chain
+        // epoch past the reviewed one. Meanwhile it takes no new checkpoints, so the
+        // state epoch below is confirmed only under the epoch it was reviewed for, and from the
+        // first run that finds the chain at that epoch it carries on by itself. The wait is
+        // reported once (see PARAM_EPOCH_WAIT); later runs end discovery quietly, and the
+        // checkpoints already stored still sync.
+        $anchored = $evm->getAnchoredState();
+        if ($anchored['epoch'] < EVM_NETWORK['expected_epoch']) {
+            $waitMessage = 'On-chain epoch ' . $anchored['epoch'] . ' is below the reviewed '
+                . "EVM_NETWORK['expected_epoch'] = " . EVM_NETWORK['expected_epoch'] . ': the '
+                . 'change it was reviewed for is not in force yet. Waiting for it; the sync '
+                . 'carries on by itself once the chain reaches epoch '
+                . EVM_NETWORK['expected_epoch'] . '.';
+            if ($epochWait === EVM_NETWORK['expected_epoch']) {
+                throw new RuntimeException($waitMessage);
+            }
+            setParams([PARAM_EPOCH_WAIT => EVM_NETWORK['expected_epoch']], $db);
+            throw new RuntimeException($waitMessage, INT_EXC_FATAL);
+        }
+        if ($anchored['epoch'] !== EVM_NETWORK['expected_epoch']) {
+            throw new RuntimeException(
+                'On-chain epoch ' . $anchored['epoch'] . " does not match the reviewed "
+                . "EVM_NETWORK['expected_epoch'] = " . EVM_NETWORK['expected_epoch'] . '. A rules '
+                . 'change or rollback the operator has not reviewed is in force; refusing to '
+                . 'follow the chain until expected_epoch is updated. :EPOCH-STOP:',
+                INT_EXC_FATAL
+            );
+        }
+        if ($epochWait !== null && $db->doDelete('params', ['param' => PARAM_EPOCH_WAIT]) === false) {
+            throw new RuntimeException('Failed to clear the epoch wait', INT_EXC_DB);
+        }
+
+        $chainLength = $evm->getCheckpointCount();
         $localNext = $checkpoint['idx'] + 1;
 
         // A rollback rewrites history below our high-water mark: the chain gets shorter,
@@ -169,7 +207,23 @@ try {
             $anchorOk = $anchor !== null && $anchor['root'] === $checkpoint['smt_root'];
         }
 
+        if ($anchorOk && $stateEpoch !== EVM_NETWORK['expected_epoch']) {
+            setParams([PARAM_STATE_EPOCH => EVM_NETWORK['expected_epoch']], $db);
+        }
+
         if (!$anchorOk) {
+            // A rollback always moves the epoch. The chain confirmed this state under the epoch
+            // in force now, so no rollback has happened since: the reads disagree with what the
+            // same epoch said before. Not a reason to discard anything - read from another
+            // endpoint. The checkpoints already stored stay usable for the sync below.
+            if ($stateEpoch === EVM_NETWORK['expected_epoch']) {
+                $evm->setRpcUrl(true);
+                throw new RuntimeException(
+                    'Anchor mismatch at idx ' . $checkpoint['idx'] . ' under epoch ' . $stateEpoch .
+                    ', which the chain confirmed this state in, so no rollback explains it; reading from another endpoint next run'
+                );
+            }
+
             logEvent(
                 'Anchor mismatch at idx ' . $checkpoint['idx'] . ' — the contract rolled back; reconciling',
                 'EVM Checkpoints',
@@ -203,14 +257,17 @@ try {
                 );
             }
 
-            // Everything above the agreement point describes a state the contract no
-            // longer attests to, so it must not stay in a table that resolve() cites.
-            if ($db->doDelete('checkpoints', ['idx' => ['sign' => '>', 'value' => $keep]]) === false) {
-                throw new RuntimeException('Failed to discard rolled-back checkpoints', INT_EXC_DB);
-            }
+            // Everything above the agreement point describes a state the contract no longer
+            // attests to, so it must not stay in a table that resolve() cites, and the domain
+            // state built on it is ahead of the chain. The epoch gate above has let this run
+            // through, so the operator has reviewed the rollback, and rebuilding is all that is
+            // left to do - done here rather than left waiting for `clean confirm`, which
+            // independent nodes would otherwise never get. Nothing is lost: it all comes from
+            // the chains again, from the next run on.
+            resetIndexerState($db, $rocksDb);
             throw new RuntimeException(
-                'Rolled back to checkpoint idx ' . $keep . '. Local domain state is now ahead of the '
-                . 'anchored chain and must be rebuilt: run "indexer clean confirm". :FORCE-STOP:',
+                'The anchor contract rolled back to checkpoint idx ' . $keep . ' (epoch ' .
+                EVM_NETWORK['expected_epoch'] . '). The node has reset itself and resyncs from genesis.',
                 INT_EXC_FATAL
             );
         }
@@ -245,7 +302,8 @@ try {
             }
         }
     } catch (Throwable $e) {
-        // A rollback or a database failure is a real fault and must surface.
+        // A rollback, an unreviewed epoch change, or a database failure is a real fault and
+        // must surface rather than being swallowed as a best-effort discovery miss.
         if (in_array($e->getCode(), [INT_EXC_FATAL, INT_EXC_DB], true)) {
             throw $e;
         }
@@ -307,29 +365,36 @@ try {
                 $scanResult = $gRpc->scanTXRange($block, $blockLimit);
                 foreach ($scanResult as $scanBlockID => $scanBlockData) {
                     foreach ($scanBlockData['tx'] as $scanTXIndex => $scanTXData) {
-                        foreach ($scanTXData['inputs'] as $scanInputData) {
-                            if (isset($scanInputData['memo']) &&
-                                ($commandData = Protocol::parseCommand(
-                                    $scanInputData['memo'],
-                                    $scanInputData['amount'],
-                                    $scanBlockData['time']
-                                )) !== []) {
-                                // ignore TX with wrong coin amount
-                                if (Protocol::paymentAmountValid($commandData, $scanInputData['amount']) === false) {
-                                    Protocol::clearDomainState();
-                                    continue;
-                                }
-
-                                Protocol::commitDomainState($commandData['domain_name']);
-
-                                $commandData['tx_id'] = $scanTXData['tx_hash'];
-                                $commandData['block_id'] = $scanBlockID;
-                                $newData[] = $commandData;
-
-                                // there can't be more than one command in the same tx
-                                break;
-                            }
+                        // there can't be more than one command in the same tx: the first note
+                        // carrying a well-formed one decides it, exactly as on the registrar
+                        // (see Protocol::commandOutput)
+                        if (($commandOutput = Protocol::commandOutput($scanTXData['inputs'], $scanBlockData['time'])) === null) {
+                            continue;
                         }
+                        $txValue = $commandOutput['amount'];
+
+                        // The full check, against the domain state this command meets. A refusal
+                        // here does not send us on to the next note - see commandOutput().
+                        if (($commandData = Protocol::parseCommand(
+                            $commandOutput['memo'],
+                            $txValue,
+                            $scanBlockData['time']
+                        )) === []) {
+                            continue;
+                        }
+
+                        // ignore TX with wrong coin amount
+                        if (Protocol::paymentAmountValid($commandData, $txValue) === false) {
+                            Protocol::clearDomainState();
+                            continue;
+                        }
+
+                        Protocol::commitDomainState($commandData['domain_name']);
+
+                        $commandData['tx_id'] = $scanTXData['tx_hash'];
+                        $commandData['block_id'] = $scanBlockID;
+                        $commandData['block_time'] = $scanBlockData['time'];
+                        $newData[] = $commandData;
                     }
                 }
 
@@ -363,6 +428,8 @@ try {
                             'domain_name' => $oneNewData['domain_name'],
                             'created_block_id' => $oneNewData['block_id'],
                             'updated_block_id' => $oneNewData['block_id'],
+                            'created_ts' => $oneNewData['block_time'],
+                            'updated_ts' => $oneNewData['block_time'],
                             'nonce' => $oneNewData['nonce'],
                         ],
                         true
@@ -381,6 +448,7 @@ try {
                         'domains',
                         [
                             'updated_block_id' => $oneNewData['block_id'],
+                            'updated_ts' => $oneNewData['block_time'],
                             'nonce' => $oneNewData['nonce'],
                         ],
                         ['domain_name' => $oneNewData['domain_name']],
@@ -396,6 +464,11 @@ try {
                     }
 
                     if ($oneNewData['op'] === Protocol::OP_LST) {
+                        // An upsert, not a plain insert: LST on a domain that is already listed
+                        // is a re-list at a new price (the web app's "Change price"), which the
+                        // protocol and the circuit both accept. The row exists then, and the
+                        // INSERT IGNORE this used to be affected nothing - which the check below
+                        // took for a fault, stopping the indexer on that checkpoint for good.
                         if (($qr = $db->doInsert(
                             'marketplace',
                             [
@@ -404,17 +477,19 @@ try {
                                 'block_id' => $oneNewData['block_id'],
                                 'nonce' => $oneNewData['nonce'],
                             ],
-                            true
+                            dup: ['price', 'block_id', 'nonce']
                         )) === false) {
                             throw new RuntimeException(
                                 'Inserting ' . $oneNewData['domain_name'] . ' to marketplace',
                                 INT_EXC_DB
                             );
                         }
-                        // Strict check: Should never happen, just in case
+                        // Strict check: Should never happen, just in case. 1 is a new listing and
+                        // 2 a re-list; 0 would be a row left exactly as it was, which cannot
+                        // happen, because every command raises the nonce.
                         if ($db->affectedRows() === 0) {
                             throw new RuntimeException(
-                                'CRITICAL! Inserting existing domain ' . $oneNewData['domain_name'] . ' to marketplace',
+                                'CRITICAL! Listing ' . $oneNewData['domain_name'] . ' changed nothing in marketplace',
                                 INT_EXC_FATAL
                             );
                         }
@@ -444,6 +519,7 @@ try {
                 $oneDomainIns = [
                     'domain_name' => $oneNewData['domain_name'],
                     'domain_block_id' => $oneNewData['block_id'],
+                    'domain_ts' => $oneNewData['block_time'],
                     'target_address' => $oneNewData['target_address'],
                     'owner_pubkey' => $oneNewData['pubkey'],
                     'domain_tx' => $oneNewData['tx_id'],
@@ -523,6 +599,21 @@ try {
         'indexer.error'
     );
 
+    // Hold the sync where it stopped instead of failing - and alerting - on every run. The
+    // marker comes from the checkpoint discovery above, by which point $db exists and $anchored
+    // holds the on-chain epoch that raised it.
+    $stopNote = '';
+    if ($e->getCode() === INT_EXC_FATAL && str_contains($e->getMessage(), ':EPOCH-STOP:')) {
+        try {
+            setParams([PARAM_SYNC_STOPPED => $anchored['epoch']], $db);
+            $stopNote = ' The sync is stopped until expected_epoch is raised to '
+                . $anchored['epoch'] . '.';
+        } catch (Throwable $stopError) {
+            logEvent($stopError->getMessage(), 'Stopping the sync failed', 'indexer.error');
+            $stopNote = ' Stopping the sync failed, so this repeats on every run.';
+        }
+    }
+
     // send a notification to the Admin
     if ($e->getCode() === INT_EXC_FATAL &&
         NOTIFY_TYPE === 'telegram' && NOTIFY_TG_BOT_KEY !== '' && NOTIFY_TG_USER_ID !== '') {
@@ -530,7 +621,7 @@ try {
             $telegram = new Api(NOTIFY_TG_BOT_KEY);
             $telegram->sendMessage([
                 'chat_id' => NOTIFY_TG_USER_ID,
-                'text' => PROJECT_NAME . ' Name Indexer error: ' . $e->getMessage()
+                'text' => PROJECT_NAME . ' Name Indexer error: ' . $e->getMessage() . $stopNote
             ]);
         } catch (Throwable $e) {
             logEvent(

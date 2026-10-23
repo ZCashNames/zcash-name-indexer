@@ -1,6 +1,6 @@
 # Adjust paths and user permissions according to your deployment.
 [Unit]
-Description=ZCASH Name Indexer Stalled Lock Watchdog
+Description=ZCash Name Indexer Stalled Lock Watchdog
 After=network.target
 
 # Started ONLY by zcash-name-indexer-watchdog.timer. Same reasoning as the sync service:
