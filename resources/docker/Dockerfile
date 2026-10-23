@@ -72,7 +72,7 @@ ARG RR_PROXY_REPO=https://github.com/ZCashNames/zcash-name-rr-proxy
 # The scanner decrypts the shielded notes that carry every command. It is a build artifact
 # of a separate repository and is NOT in this one's git tree, so it must be fetched — a
 # clone alone leaves Rpc::TX_SCANNER_BIN pointing at a file that does not exist.
-ARG TX_SCANNER_VERSION=v0.1.0
+ARG TX_SCANNER_VERSION=v0.1.1
 ARG TX_SCANNER_REPO=https://github.com/ZCashNames/rust_tx_scanner
 
 # Debian trixie ships nginx 1.26.3; the current stable branch is 1.30.x and carries
